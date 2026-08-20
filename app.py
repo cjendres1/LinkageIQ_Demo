@@ -12,12 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Load spaCy lightweight model
 @st.cache_resource
 def load_nlp():
-    try:
-        return spacy.load("en_core_web_sm")
-    except OSError:
-        # Download and load the model directly if not found locally
-        spacy.cli.download("en_core_web_sm")
-        return spacy.load("en_core_web_sm")
+    return spacy.load("en_core_web_sm")
 
 nlp = load_nlp()
 

@@ -10,7 +10,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Load spaCy lightweight model
 @st.cache_resource
 def load_nlp():
-    return spacy.load("en_core_web_sm")
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        # Fetch and load the model directly if not found locally
+        import spacy.cli
+        spacy.cli.download("en_core_web_sm")
+        return spacy.load("en_core_web_sm")
 
 nlp = load_nlp()
 
@@ -142,4 +148,3 @@ with col_out:
                     st.metric("Composite Match", f"{row['composite_score']*100:.1f}%")
                     st.caption(f"Field Linkage: {row['recordlinkage_score']*100:.0f}%")
                     st.caption(f"Notes Cosine Sim: {row['tfidf_cosine_score']*100:.0f}%")
-                    

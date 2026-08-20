@@ -3,9 +3,11 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 import spacy
+import spacy.cli
 import recordlinkage
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
 
 # Load spaCy lightweight model
 @st.cache_resource
@@ -13,8 +15,7 @@ def load_nlp():
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        # Fetch and load the model directly if not found locally
-        import spacy.cli
+        # Download and load the model directly if not found locally
         spacy.cli.download("en_core_web_sm")
         return spacy.load("en_core_web_sm")
 

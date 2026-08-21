@@ -181,7 +181,7 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
             cll.NullLevel("first_name"),
             cll.ExactMatchLevel("first_name"),
             cll.JaroWinklerLevel("first_name", 0.85),
-            cll.CustomLevel("soundex(first_name_l) = soundex(first_name_r)"),
+            cll.PhoneticMatchLevel("first_name"),
             cll.ElseLevel(),
         ]
     )

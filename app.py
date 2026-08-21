@@ -175,7 +175,7 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     db_api = DuckDBAPI()
     
-    # Fast multi-level name comparison with native Levenshtein edit distance
+    # First name comparison waterfall
     first_name_comparison = cl.CustomComparison(
         output_column_name="first_name",
         comparison_levels=[
@@ -189,11 +189,13 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     settings = SettingsCreator(
         link_type="link_only",
-        probability_two_random_records_match=0.5,
+        # Lower prior odds (1% baseline) to prevent single-attribute match dominance
+        probability_two_random_records_match=0.01,
         comparisons=[
             first_name_comparison,
             cl.JaroWinklerAtThresholds("last_name", [0.85]),
             cl.ExactMatch("gender"),
+            cl.ExactMatch("age"),  # Enforces penalty for age gaps
         ],
         blocking_rules_to_generate_predictions=[
             block_on("gender"),

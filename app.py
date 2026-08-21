@@ -166,23 +166,23 @@ def run_recordlinkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     return dict(zip(res["level_1"], res["linkage_score"]))
 
 def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
-    """Probabilistic Fellegi-Sunter linkage using Splink (DuckDB) with Phonetic Fallback."""
+    """Probabilistic linkage using Splink + DuckDB with Phonetic Matching."""
     if not SPLINK_AVAILABLE:
         return run_recordlinkage(fl_record, vt_df)
     
+    # Prepare input frames
     df_l = pd.DataFrame([{**fl_record, "unique_id": "FL-001"}])
     df_r = vt_df.copy().rename(columns={"vt_id": "unique_id"})
     
     db_api = DuckDBAPI()
     
-    # Custom Name Comparison using Exact, Jaro-Winkler, AND Soundex/Phonetic Levels
+    # Fast multi-level name comparison
     first_name_comparison = cl.CustomComparison(
         output_column_name="first_name",
         comparison_levels=[
             cll.NullLevel("first_name"),
             cll.ExactMatchLevel("first_name"),
             cll.JaroWinklerLevel("first_name", 0.85),
-            # Phonetic match using Soundex phonetic equivalence
             cll.SoundexLevel("first_name"),
             cll.ElseLevel(),
         ]
@@ -201,17 +201,14 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
         ]
     )
     
+    # Run prediction directly without parameter estimation loops
     linker = Linker([df_l, df_r], settings, db_api)
-    
     predictions = linker.inference.predict(threshold_match_weight=-10)
     pred_df = predictions.as_pandas_dataframe()
     
     if not pred_df.empty:
-        scores = dict(zip(pred_df["unique_id_r"], pred_df["match_probability"]))
-    else:
-        scores = {}
-        
-    return scores
+        return dict(zip(pred_df["unique_id_r"], pred_df["match_probability"]))
+    return {}
 
 # -----------------------------------------------------------------------------
 # 5. STREAMLIT INTERFACE

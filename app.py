@@ -10,6 +10,7 @@ from faker import Faker
 # Splink imports
 try:
     import splink.comparison_library as cl
+    import splink.comparison_level_library as cll
     from splink import DuckDBAPI, Linker, SettingsCreator, block_on
     SPLINK_AVAILABLE = True
 except ImportError:
@@ -165,9 +166,8 @@ def run_recordlinkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     return dict(zip(res["level_1"], res["linkage_score"]))
 
 def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
-    """Probabilistic Fellegi-Sunter linkage using Splink (DuckDB)."""
+    """Probabilistic Fellegi-Sunter linkage using Splink (DuckDB) with Phonetic Fallback."""
     if not SPLINK_AVAILABLE:
-        # Fallback to recordlinkage if Splink isn't available
         return run_recordlinkage(fl_record, vt_df)
     
     df_l = pd.DataFrame([{**fl_record, "unique_id": "FL-001"}])
@@ -175,10 +175,24 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     db_api = DuckDBAPI()
     
+    # Custom Name Comparison using Exact, Jaro-Winkler, AND Soundex/Phonetic Levels
+    first_name_comparison = cl.CustomComparison(
+        output_column_name="first_name",
+        comparison_levels=[
+            cll.NullLevel("first_name"),
+            cll.ExactMatchLevel("first_name"),
+            cll.JaroWinklerLevel("first_name", 0.85),
+            # Phonetic match using Soundex phonetic equivalence
+            cll.SoundexLevel("first_name"),
+            cll.ElseLevel(),
+        ]
+    )
+    
     settings = SettingsCreator(
         link_type="link_only",
+        prior_uniform_match_prob=0.5,
         comparisons=[
-            cl.JaroWinklerAtThresholds("first_name", [0.85]),
+            first_name_comparison,
             cl.JaroWinklerAtThresholds("last_name", [0.85]),
             cl.ExactMatch("gender"),
         ],
@@ -189,14 +203,9 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     linker = Linker([df_l, df_r], settings, db_api)
     
-    # Estimate u and m probabilities for probabilistic weighting
-    linker.training.estimate_u_using_random_sampling(max_pairs=1e4)
-    linker.training.estimate_parameters_using_expectation_maximisation(block_on("gender"))
-    
     predictions = linker.inference.predict(threshold_match_weight=-10)
     pred_df = predictions.as_pandas_dataframe()
     
-    # Map right unique_id to calculated match_probability
     if not pred_df.empty:
         scores = dict(zip(pred_df["unique_id_r"], pred_df["match_probability"]))
     else:

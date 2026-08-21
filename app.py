@@ -166,7 +166,7 @@ def run_recordlinkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     return dict(zip(res["level_1"], res["linkage_score"]))
 
 def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
-    """Probabilistic linkage using Splink + DuckDB with Phonetic Matching."""
+    """Probabilistic linkage using Splink + DuckDB."""
     if not SPLINK_AVAILABLE:
         return run_recordlinkage(fl_record, vt_df)
     
@@ -175,13 +175,14 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     db_api = DuckDBAPI()
     
+    # Fast multi-level name comparison with native Levenshtein edit distance
     first_name_comparison = cl.CustomComparison(
         output_column_name="first_name",
         comparison_levels=[
             cll.NullLevel("first_name"),
             cll.ExactMatchLevel("first_name"),
             cll.JaroWinklerLevel("first_name", 0.85),
-            cll.PhoneticMatchLevel("first_name"),
+            cll.LevenshteinLevel("first_name", 2),
             cll.ElseLevel(),
         ]
     )

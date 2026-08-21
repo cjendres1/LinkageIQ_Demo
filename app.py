@@ -4,6 +4,8 @@ import numpy as np
 import streamlit as st
 import spacy
 import recordlinkage
+import random
+from faker import Faker
 
 # Splink imports
 try:
@@ -26,56 +28,87 @@ def load_nlp():
 nlp = load_nlp()
 
 # -----------------------------------------------------------------------------
-# 1. SYNTHETIC NHANES DATASETS
+# 1. SYNTHETIC NHANES DATASETS GENERATOR (Faker + Deterministic Targets)
 # -----------------------------------------------------------------------------
 @st.cache_data
 def load_datasets():
-    return pd.DataFrame([
+    # Seed Faker and random for reproducible interview demos
+    fake = Faker()
+    Faker.seed(42)
+    random.seed(42)
+    
+    records = []
+    
+    # Target Match Candidates (Known Ground Truth for Demo)
+    targets = [
         {
-            "vt_id": "VT-101", 
+            "vt_id": "VT-1001", 
             "first_name": "Rebecca", 
             "last_name": "Miller", 
             "age": 52, 
             "gender": "Female", 
             "sys_bp": 138, 
             "dia_bp": 88, 
-            "hba1c": 6.2,
+            "hba1c": 6.2, 
             "notes": "Patient reports mild hypertension and seasonal allergies."
         },
         {
-            "vt_id": "VT-102", 
+            "vt_id": "VT-1002", 
             "first_name": "Debra", 
             "last_name": "Johnson", 
             "age": 64, 
             "gender": "Female", 
             "sys_bp": 142, 
             "dia_bp": 90, 
-            "hba1c": 7.1,
+            "hba1c": 7.1, 
             "notes": "History of type 2 diabetes managed with metformin."
         },
         {
-            "vt_id": "VT-103", 
+            "vt_id": "VT-1003", 
             "first_name": "Elizabeth", 
             "last_name": "Johnson", 
             "age": 41, 
             "gender": "Female", 
             "sys_bp": 120, 
             "dia_bp": 78, 
-            "hba1c": 5.4,
+            "hba1c": 5.4, 
             "notes": "Normal baseline routine annual checkup."
         },
         {
-            "vt_id": "VT-104", 
+            "vt_id": "VT-1004", 
             "first_name": "Robert", 
             "last_name": "Davis", 
             "age": 58, 
             "gender": "Male", 
             "sys_bp": 130, 
             "dia_bp": 84, 
-            "hba1c": 5.8,
+            "hba1c": 5.8, 
             "notes": "Baseline screening normal, routine annual checkup."
-        },
-    ])
+        }
+    ]
+    records.extend(targets)
+    
+    # Generate 96 additional realistic patient profiles using Faker
+    for i in range(1005, 1101):
+        gender = random.choice(["Female", "Male"])
+        first_name = fake.first_name_female() if gender == "Female" else fake.first_name_male()
+        
+        # Clinical note synthetic text using Faker sentences mixed with clinical terms
+        clinical_note = f"{fake.sentence(nb_words=6)} {random.choice(['Normal baseline screening.', 'Mild hypertension noted.', 'Routine annual checkup.', 'Type 2 diabetes follow-up.'])}"
+        
+        records.append({
+            "vt_id": f"VT-{i}",
+            "first_name": first_name,
+            "last_name": fake.last_name(),
+            "age": random.randint(18, 80),
+            "gender": gender,
+            "sys_bp": random.randint(110, 160),
+            "dia_bp": random.randint(70, 100),
+            "hba1c": round(random.uniform(5.0, 8.5), 1),
+            "notes": clinical_note
+        })
+        
+    return pd.DataFrame(records)
 
 vt_db = load_datasets()
 
@@ -256,12 +289,12 @@ with col_out:
         st.session_state["confirmed_patient"] = None
         st.session_state["active_engine"] = link_method
 
-    # Render Search Results
+# Render Search Results (Show Top 5)
     if "search_results" in st.session_state:
         candidates = st.session_state["search_results"]
-        engine_used = st.session_state.get("active_engine", "recordlinkage")
         
-        for cand in candidates:
+        st.markdown("**Top Matches:**")
+        for cand in candidates[:5]:  # Display top 5 matches
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
                 with c1:

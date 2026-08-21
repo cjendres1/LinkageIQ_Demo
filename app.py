@@ -4,6 +4,15 @@ import numpy as np
 import streamlit as st
 import spacy
 import recordlinkage
+
+# Splink imports
+try:
+    import splink.comparison_library as cl
+    from splink import DuckDBAPI, Linker, SettingsCreator, block_on
+    SPLINK_AVAILABLE = True
+except ImportError:
+    SPLINK_AVAILABLE = False
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -102,14 +111,13 @@ def compute_tfidf_similarity(query_text: str, corpus_series: pd.Series):
     return cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
 
 # -----------------------------------------------------------------------------
-# 4. RECORD LINKAGE ENGINE
+# 4. LINKAGE ENGINES
 # -----------------------------------------------------------------------------
-def run_record_linkage(fl_record: dict, vt_df: pd.DataFrame):
-    """Uses RecordLinkage library for deterministic and probabilistic field comparison."""
+def run_recordlinkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
+    """Rule-based linkage using recordlinkage."""
     fl_df = pd.DataFrame([fl_record])
-    
     indexer = recordlinkage.Index()
-    indexer.block("gender")  # Block on gender for execution efficiency
+    indexer.block("gender")
     candidate_pairs = indexer.index(fl_df, vt_df)
     
     compare = recordlinkage.Compare()
@@ -118,8 +126,50 @@ def run_record_linkage(fl_record: dict, vt_df: pd.DataFrame):
     compare.numeric("age", "age", method="linear", offset=2, scale=5, label="age_sim")
     
     features = compare.compute(candidate_pairs, fl_df, vt_df)
-    features["linkage_score"] = features.sum(axis=1) / 3.0  # Normalized 0-1
-    return features.reset_index()
+    features["linkage_score"] = features.sum(axis=1) / 3.0
+    
+    res = features.reset_index()
+    return dict(zip(res["level_1"], res["linkage_score"]))
+
+def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
+    """Probabilistic Fellegi-Sunter linkage using Splink (DuckDB)."""
+    if not SPLINK_AVAILABLE:
+        # Fallback to recordlinkage if Splink isn't available
+        return run_recordlinkage(fl_record, vt_df)
+    
+    df_l = pd.DataFrame([{**fl_record, "unique_id": "FL-001"}])
+    df_r = vt_df.copy().rename(columns={"vt_id": "unique_id"})
+    
+    db_api = DuckDBAPI()
+    
+    settings = SettingsCreator(
+        link_type="link_only",
+        comparisons=[
+            cl.JaroWinklerAtThresholds("first_name", [0.85]),
+            cl.JaroWinklerAtThresholds("last_name", [0.85]),
+            cl.ExactMatch("gender"),
+        ],
+        blocking_rules_to_generate_predictions=[
+            block_on("gender"),
+        ]
+    )
+    
+    linker = Linker([df_l, df_r], settings, db_api)
+    
+    # Estimate u and m probabilities for probabilistic weighting
+    linker.training.estimate_u_using_random_sampling(max_pairs=1e4)
+    linker.training.estimate_parameters_using_expectation_maximisation(block_on("gender"))
+    
+    predictions = linker.inference.predict(threshold_match_weight=-10)
+    pred_df = predictions.as_pandas_dataframe()
+    
+    # Map right unique_id to calculated match_probability
+    if not pred_df.empty:
+        scores = dict(zip(pred_df["unique_id_r"], pred_df["match_probability"]))
+    else:
+        scores = {}
+        
+    return scores
 
 # -----------------------------------------------------------------------------
 # 5. STREAMLIT INTERFACE
@@ -127,7 +177,24 @@ def run_record_linkage(fl_record: dict, vt_df: pd.DataFrame):
 st.set_page_config(page_title="LinkageIQ_Demo", layout="wide")
 
 st.title("LinkageIQ_Demo: Multi-Modal Patient Resolver")
-st.caption("Demonstrating Regex, spaCy NLP, TF-IDF + Cosine Similarity, and RecordLinkage indexing.")
+st.caption("Demonstrating Probabilistic & Rule-Based Entity Resolution, spaCy NLP, TF-IDF + Cosine Similarity.")
+
+st.divider()
+
+# Top Selection Bar
+col_engine, col_info = st.columns([1, 2])
+with col_engine:
+    link_method = st.selectbox(
+        "Link Method Engine", 
+        ["recordlinkage (Rule-Based)", "Splink (Probabilistic DuckDB)"],
+        help="Select between deterministic/rule-based scoring or Splink's probabilistic Fellegi-Sunter expectation-maximization engine."
+    )
+
+with col_info:
+    if "recordlinkage" in link_method:
+        st.info("💡 **recordlinkage:** Uses fixed Jaro-Winkler string similarity thresholds and linear age scaling across blocked gender pairs.")
+    else:
+        st.info("⚡ **Splink:** Uses DuckDB to execute unsupervised Expectation-Maximization (EM) parameter estimation under the Fellegi-Sunter probabilistic framework.")
 
 st.divider()
 
@@ -166,29 +233,33 @@ with col_out:
     
     if run_btn:
         fl_payload = {"first_name": fl_fn, "last_name": fl_ln, "age": fl_age, "gender": fl_gender}
-        
-        # 1. Demographic Linkage
-        linkage_res = run_record_linkage(fl_payload, vt_db)
         results_df = vt_db.copy()
         
-        linkage_map = dict(zip(linkage_res["level_1"], linkage_res["linkage_score"]))
-        results_df["recordlinkage_score"] = results_df.index.map(lambda x: linkage_map.get(x, 0.0))
+        # 1. Select Engine
+        if "Splink" in link_method:
+            scores_map = run_splink_linkage(fl_payload, vt_db)
+            results_df["structured_link_score"] = results_df["vt_id"].map(lambda x: scores_map.get(x, 0.0))
+        else:
+            scores_map = run_recordlinkage(fl_payload, vt_db)
+            results_df["structured_link_score"] = results_df.index.map(lambda x: scores_map.get(x, 0.0))
         
         # 2. Conditional Unstructured Note Matching
         if use_notes_in_matching and fl_notes.strip():
             tfidf_scores = compute_tfidf_similarity(fl_notes, vt_db["notes"])
             results_df["tfidf_cosine_score"] = tfidf_scores
-            results_df["composite_score"] = (results_df["recordlinkage_score"] * 0.6) + (results_df["tfidf_cosine_score"] * 0.4)
+            results_df["composite_score"] = (results_df["structured_link_score"] * 0.6) + (results_df["tfidf_cosine_score"] * 0.4)
         else:
             results_df["tfidf_cosine_score"] = 0.0
-            results_df["composite_score"] = results_df["recordlinkage_score"]
+            results_df["composite_score"] = results_df["structured_link_score"]
         
         st.session_state["search_results"] = results_df.sort_values(by="composite_score", ascending=False).to_dict(orient="records")
         st.session_state["confirmed_patient"] = None
+        st.session_state["active_engine"] = link_method
 
     # Render Search Results
     if "search_results" in st.session_state:
         candidates = st.session_state["search_results"]
+        engine_used = st.session_state.get("active_engine", "recordlinkage")
         
         for cand in candidates:
             with st.container(border=True):
@@ -199,7 +270,7 @@ with col_out:
                     st.info(f"**VT Baseline Notes:** {cand['notes']}")
                 with c2:
                     st.metric("Composite Match", f"{cand['composite_score']*100:.1f}%")
-                    st.caption(f"Demographic Score: {cand['recordlinkage_score']*100:.0f}%")
+                    st.caption(f"Engine Match Score: {cand['structured_link_score']*100:.0f}%")
                     if use_notes_in_matching:
                         st.caption(f"Notes Similarity: {cand['tfidf_cosine_score']*100:.0f}%")
                     

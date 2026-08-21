@@ -176,14 +176,15 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     db_api = DuckDBAPI()
     
-# Fast multi-level name comparison with Soundex
+# Fast multi-level name comparison with Soundex using CustomLevel
     first_name_comparison = cl.CustomComparison(
         output_column_name="first_name",
         comparison_levels=[
             cll.NullLevel("first_name"),
             cll.ExactMatchLevel("first_name"),
             cll.JaroWinklerLevel("first_name", 0.85),
-            cll.SoundexLevelAtThresholds("first_name"),
+            # Native DuckDB soundex comparison
+            cll.CustomLevel("soundex(first_name_l) = soundex(first_name_r)", label="Soundex match"),
             cll.ElseLevel(),
         ]
     )

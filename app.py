@@ -188,7 +188,7 @@ def run_splink_linkage(fl_record: dict, vt_df: pd.DataFrame) -> dict:
     
     settings = SettingsCreator(
         link_type="link_only",
-        prior_uniform_match_prob=0.5,
+        probability_two_random_records_match=0.5,
         comparisons=[
             first_name_comparison,
             cl.JaroWinklerAtThresholds("last_name", [0.85]),
